@@ -1,0 +1,34 @@
+From: liviyifan <344781483+liviyifan@users.noreply.github.com>
+Subject: [PATCH] [LSR] Use std::max/min<size_t> for the UsedByIndices sizes
+
+SmallBitVector::size_type is unsigned while the indices are size_t. Where size_t is
+unsigned long but only 32 bits wide (AArch64 ILP32 with GCC), the two std::max/std::min
+arguments have different types and the call does not compile:
+
+  LoopStrengthReduce.cpp:419: error: no matching function for call to
+  max(llvm::SmallBitVector::size_type, long unsigned int)
+
+Name the type explicitly. No change on other hosts.
+---
+diff --git a/llvm/lib/Transforms/Scalar/LoopStrengthReduce.cpp b/llvm/lib/Transforms/Scalar/LoopStrengthReduce.cpp
+index 32616bfe6..67c111467 100644
+--- a/llvm/lib/Transforms/Scalar/LoopStrengthReduce.cpp
++++ b/llvm/lib/Transforms/Scalar/LoopStrengthReduce.cpp
+@@ -416,7 +416,7 @@ RegUseTracker::countRegister(const SCEV *Reg, size_t LUIdx) {
+   RegSortData &RSD = Pair.first->second;
+   if (Pair.second)
+     RegSequence.push_back(Reg);
+-  RSD.UsedByIndices.resize(std::max(RSD.UsedByIndices.size(), LUIdx + 1));
++  RSD.UsedByIndices.resize(std::max<size_t>(RSD.UsedByIndices.size(), LUIdx + 1));
+   RSD.UsedByIndices.set(LUIdx);
+ }
+ 
+@@ -440,7 +440,7 @@ RegUseTracker::swapAndDropUse(size_t LUIdx, size_t LastLUIdx) {
+     if (LUIdx < UsedByIndices.size())
+       UsedByIndices[LUIdx] =
+         LastLUIdx < UsedByIndices.size() ? UsedByIndices[LastLUIdx] : false;
+-    UsedByIndices.resize(std::min(UsedByIndices.size(), LastLUIdx));
++    UsedByIndices.resize(std::min<size_t>(UsedByIndices.size(), LastLUIdx));
+   }
+ }
+ 
