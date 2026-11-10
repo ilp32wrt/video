@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=glslang
 PKG_VERSION:=15.4.0
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://codeload.github.com/KhronosGroup/$(PKG_NAME)/tar.gz/$(PKG_VERSION)?
@@ -13,7 +13,9 @@ PKG_LICENSE:=BSD-3-Clause BSD-2-Clause MIT Apache GPL-3.0-or-later
 PKG_LICENSE_FILES:=LICENSE.txt
 
 CMAKE_INSTALL:=1
-PKG_BUILD_FLAGS:=gc-sections lto
+# no lto: the always_inline vsnprintf of fortify-headers fails under LTO
+# ("function body can be overwritten at link time")
+PKG_BUILD_FLAGS:=gc-sections
 
 include $(INCLUDE_DIR)/package.mk
 include $(INCLUDE_DIR)/host-build.mk
