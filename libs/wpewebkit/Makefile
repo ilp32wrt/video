@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=wpewebkit
 PKG_VERSION:=2.50.1
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.xz
 PKG_SOURCE_URL:=https://wpewebkit.org/releases
@@ -20,6 +20,17 @@ include $(INCLUDE_DIR)/package.mk
 include $(INCLUDE_DIR)/cmake.mk
 
 CMAKE_BINARY_SUBDIR:=openwrt-build
+
+# AArch64 ILP32 (64-bit registers, 32-bit pointers): the JIT and the LLInt assembly need 64-bit
+# pointers (MatchResult/UGPRPair static_asserts), so use the portable C_LOOP interpreter with the
+# settings WebKit picks for CPUs without a JIT (no WebAssembly, no sampling profiler, system malloc)
+WPEWEBKIT_JIT:=$(if $(CONFIG_AARCH64_ABI_ILP32),,$(CONFIG_arm_v7)$(CONFIG_aarch64)$(CONFIG_riscv64)$(CONFIG_x86_64))
+WPEWEBKIT_ILP32_OPTIONS:= \
+	-DENABLE_WEBASSEMBLY=OFF \
+	-DENABLE_SAMPLING_PROFILER=OFF \
+	-DENABLE_FTL_JIT=OFF \
+	-DENABLE_DFG_JIT=OFF \
+	-DUSE_SYSTEM_MALLOC=ON
 
 CMAKE_OPTIONS += \
 	-DBWRAP_EXECUTABLE=/usr/bin/bwrap \
@@ -39,8 +50,9 @@ CMAKE_OPTIONS += \
 	-DENABLE_SPELLCHECK=OFF \
 	-DENABLE_SPEECH_SYNTHESIS=OFF \
 	-DENABLE_TOUCH_EVENTS=ON \
-	-DENABLE_JIT=$(if $(CONFIG_arm_v7)$(CONFIG_aarch64)$(CONFIG_riscv64)$(CONFIG_x86_64),ON,OFF) \
-	-DENABLE_C_LOOP=$(if $(CONFIG_arm_v7)$(CONFIG_aarch64)$(CONFIG_riscv64)$(CONFIG_x86_64),OFF,ON) \
+	-DENABLE_JIT=$(if $(WPEWEBKIT_JIT),ON,OFF) \
+	-DENABLE_C_LOOP=$(if $(WPEWEBKIT_JIT),OFF,ON) \
+	$(if $(CONFIG_AARCH64_ABI_ILP32),$(WPEWEBKIT_ILP32_OPTIONS)) \
 	-DENABLE_WEBGL=ON \
 	-DENABLE_VIDEO=ON \
 	-DPORT=WPE \
