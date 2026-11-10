@@ -8,7 +8,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=qt5script
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 PKG_HASH:=0b98baa6eece7d0e7860590dd67faf452499096f62f33d16556fd38ac236eec2
 
 include ../common.mk

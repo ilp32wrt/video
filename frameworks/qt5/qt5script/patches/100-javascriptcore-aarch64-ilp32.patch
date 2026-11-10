@@ -1,0 +1,39 @@
+JavaScriptCore: AArch64 ILP32 like x32
+
+With __ILP32__ the bundled JavaScriptCore took the JSVALUE64 path of AArch64, which needs
+64-bit pointers (bitwise_cast<intptr_t>(double) failed to compile). Use JSVALUE32_64 and no
+JIT, as for x32.
+
+--- a/src/3rdparty/javascriptcore/JavaScriptCore/wtf/Platform.h
++++ b/src/3rdparty/javascriptcore/JavaScriptCore/wtf/Platform.h
+@@ -254,6 +254,10 @@
+ /* CPU(AARCH64) - AArch64 */
+ #if defined(__aarch64__) || defined(_M_ARM64)
+ #define WTF_CPU_AARCH64 1
++/* AArch64 ILP32: 64-bit registers, 32-bit pointers (like x32) */
++#if defined(__ILP32__)
++#define WTF_CPU_AARCH64_ILP32 1
++#endif
+ #if defined(__AARCH64EB__)
+ #define WTF_CPU_BIG_ENDIAN 1
+ #endif
+@@ -958,7 +962,7 @@
+ #endif
+ 
+ #if !defined(WTF_USE_JSVALUE64) && !defined(WTF_USE_JSVALUE32) && !defined(WTF_USE_JSVALUE32_64)
+-#if (CPU(X86_64) && !CPU(X32) && (OS(UNIX) || OS(WINDOWS) || OS(SOLARIS) || OS(HPUX))) || (CPU(IA64) && !CPU(IA64_32)) || CPU(ALPHA) || CPU(AIX64) || CPU(SPARC64) || CPU(MIPS64) || CPU(AARCH64) || CPU(RISCV64)
++#if (CPU(X86_64) && !CPU(X32) && (OS(UNIX) || OS(WINDOWS) || OS(SOLARIS) || OS(HPUX))) || (CPU(IA64) && !CPU(IA64_32)) || CPU(ALPHA) || CPU(AIX64) || CPU(SPARC64) || CPU(MIPS64) || (CPU(AARCH64) && !CPU(AARCH64_ILP32)) || CPU(RISCV64)
+ #define WTF_USE_JSVALUE64 1
+ #elif CPU(ARM) || CPU(PPC64) || CPU(RISCV32)
+ #define WTF_USE_JSVALUE32 1
+@@ -975,8 +979,8 @@
+ #define ENABLE_REPAINT_THROTTLING 0
+ #endif
+ 
+-/* Disable JIT on x32 */
+-#if CPU(X32)
++/* Disable JIT on x32 and AArch64 ILP32 */
++#if CPU(X32) || CPU(AARCH64_ILP32)
+ #define ENABLE_JIT 0
+ #endif
+ 
