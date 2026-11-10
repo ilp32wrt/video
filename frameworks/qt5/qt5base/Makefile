@@ -12,7 +12,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=qt5base
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 PKG_HASH:=b04815058c18058b6ba837206756a2c87d1391f07a0dcb0dd314f970fd041592
 
 include ../common.mk
@@ -167,7 +167,8 @@ endef
 define Package/qt5base-plugin-input-libinput
   $(call Package/qt5base/Default)
   TITLE+=libinput (plugin)
-  DEPENDS+=+qt5base-core +qt5base-gui +libinput
+  # Qt's libinput feature requires libudev
+  DEPENDS+=+qt5base-core +qt5base-gui +libinput +libudev
 endef
 
 define Package/qt5base-plugin-input-evdevkeyboard
@@ -382,7 +383,7 @@ define Build/Configure
 			--kms=$(if $(CONFIG_BUILD_qt5base-gui_DRM),yes,no) \
 			--linuxfb=$(if $(CONFIG_PACKAGE_qt5base-plugin-platforms-linuxfb),yes,no) \
 			--xcb=no \
-			--libudev=$(if $(CONFIG_PACKAGE_qt5base-input-autodiscovery),yes,no) \
+			--libudev=$(if $(CONFIG_PACKAGE_qt5base-input-autodiscovery)$(CONFIG_PACKAGE_qt5base-plugin-input-libinput),yes,no) \
 			--evdev=yes \
 			--libinput=$(if $(CONFIG_PACKAGE_qt5base-plugin-input-libinput),yes,no) \
 			--mtdev=no \
