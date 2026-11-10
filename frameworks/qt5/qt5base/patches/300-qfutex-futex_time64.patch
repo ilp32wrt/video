@@ -1,0 +1,36 @@
+qfutex: use futex_time64 when there is no __NR_futex
+
+A 32-bit ABI with a 64-bit time_t (AArch64 ILP32, riscv32) has no plain futex in its
+kernel headers, only futex_time64, which takes a struct __kernel_timespec: pass the
+timeout as two 64-bit values, as musl does.
+
+--- a/src/corelib/thread/qfutex_p.h
++++ b/src/corelib/thread/qfutex_p.h
+@@ -113,7 +113,12 @@
+ 
+         // we use __NR_futex because some libcs (like Android's bionic) don't
+         // provide SYS_futex etc.
++        // A 32-bit ABI with a 64-bit time_t (AArch64 ILP32, riscv32) has only futex_time64.
++#if defined(__NR_futex)
+         int result = syscall(__NR_futex, addr, op | FUTEX_PRIVATE_FLAG, val, val2, addr2, val3);
++#else
++        int result = syscall(__NR_futex_time64, addr, op | FUTEX_PRIVATE_FLAG, val, val2, addr2, val3);
++#endif
+ 
+         _q_tsan_acquire(addr, addr2);
+ 
+@@ -137,9 +142,14 @@
+     template <typename Atomic>
+     inline bool futexWait(Atomic &futex, typename Atomic::Type expectedValue, qint64 nstimeout)
+     {
++#if defined(__NR_futex)
+         struct timespec ts;
+         ts.tv_sec = nstimeout / 1000 / 1000 / 1000;
+         ts.tv_nsec = nstimeout % (1000 * 1000 * 1000);
++#else
++        // struct __kernel_timespec: two 64-bit values (tv_nsec without libc padding)
++        long long ts[2] = { nstimeout / 1000 / 1000 / 1000, nstimeout % (1000 * 1000 * 1000) };
++#endif
+         int r = _q_futex(addr(&futex), FUTEX_WAIT, qintptr(expectedValue), quintptr(&ts));
+         return r == 0 || errno != ETIMEDOUT;
+     }
