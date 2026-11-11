@@ -12,7 +12,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=qt5base
-PKG_RELEASE:=4
+PKG_RELEASE:=5
 PKG_HASH:=b04815058c18058b6ba837206756a2c87d1391f07a0dcb0dd314f970fd041592
 
 include ../common.mk
@@ -174,25 +174,25 @@ endef
 define Package/qt5base-plugin-input-evdevkeyboard
   $(call Package/qt5base/Default)
   TITLE+=evdev keyboard (plugin)
-  DEPENDS+=+qt5base-core +qt5base-gui +PACKAGE_qt5base-input-autodiscovery:libudev +PACKAGE_qt5base-plugin-input-libinput:libinput
+  DEPENDS+=+qt5base-core +qt5base-gui +PACKAGE_qt5base-input-autodiscovery:libudev +PACKAGE_qt5base-plugin-input-libinput:libudev +PACKAGE_qt5base-plugin-input-libinput:libinput
 endef
 
 define Package/qt5base-plugin-input-evdevmouse
   $(call Package/qt5base/Default)
   TITLE+=evdev mouse (plugin)
-  DEPENDS+=+qt5base-core +qt5base-gui +PACKAGE_qt5base-input-autodiscovery:libudev +PACKAGE_qt5base-plugin-input-libinput:libinput
+  DEPENDS+=+qt5base-core +qt5base-gui +PACKAGE_qt5base-input-autodiscovery:libudev +PACKAGE_qt5base-plugin-input-libinput:libudev +PACKAGE_qt5base-plugin-input-libinput:libinput
 endef
 
 define Package/qt5base-plugin-input-evdevtablet
   $(call Package/qt5base/Default)
   TITLE+=evdev tablet (plugin)
-  DEPENDS+=+qt5base-core +qt5base-gui +PACKAGE_qt5base-input-autodiscovery:libudev +PACKAGE_qt5base-plugin-input-libinput:libinput
+  DEPENDS+=+qt5base-core +qt5base-gui +PACKAGE_qt5base-input-autodiscovery:libudev +PACKAGE_qt5base-plugin-input-libinput:libudev +PACKAGE_qt5base-plugin-input-libinput:libinput
 endef
 
 define Package/qt5base-plugin-input-evdevtouch
   $(call Package/qt5base/Default)
   TITLE+=evdev touch (plugin)
-  DEPENDS+=+qt5base-core +qt5base-gui +PACKAGE_qt5base-input-autodiscovery:libudev +PACKAGE_qt5base-plugin-input-libinput:libinput
+  DEPENDS+=+qt5base-core +qt5base-gui +PACKAGE_qt5base-input-autodiscovery:libudev +PACKAGE_qt5base-plugin-input-libinput:libudev +PACKAGE_qt5base-plugin-input-libinput:libinput
 endef
 
 ####### imageformats
@@ -226,18 +226,22 @@ endef
 define Package/qt5base-plugin-platforms-linuxfb
   $(call Package/qt5base/Default)
   TITLE+=platform linuxfb (plugin)
-  DEPENDS+=+qt5base-core +qt5base-gui +libfreetype +PACKAGE_qt5base-input-autodiscovery:libudev +PACKAGE_qt5base-plugin-input-libinput:libinput
+  DEPENDS+=+qt5base-core +qt5base-gui +libfreetype +PACKAGE_qt5base-input-autodiscovery:libudev +PACKAGE_qt5base-plugin-input-libinput:libudev +PACKAGE_qt5base-plugin-input-libinput:libinput +BUILD_qt5base-gui_DRM:libdrm
 endef
 
 define Package/qt5base-plugin-platforms-eglfs
   $(call Package/qt5base/Default)
   TITLE+=platform eglfs (plugin)
+  # only built with OpenGL ES 2
+  DEPENDS+=@BUILD_qt5base-gui_OPENGL_OPENGLES2
   DEPENDS+=+qt5base-core +qt5base-gui +libfreetype +fontconfig +libmesa # +qt5base-eglfs-device-integration
 endef
 
 define Package/qt5base-plugin-platforms-minimalegl
   $(call Package/qt5base/Default)
   TITLE+=platform minimalegl (plugin)
+  # only built with OpenGL ES 2
+  DEPENDS+=@BUILD_qt5base-gui_OPENGL_OPENGLES2
   DEPENDS+=+qt5base-core +qt5base-gui # +libfreetype +fontconfig
 endef
 
@@ -256,7 +260,7 @@ endef
 define Package/qt5base-plugin-platforms-vnc
   $(call Package/qt5base/Default)
   TITLE+=platform vnc (plugin)
-  DEPENDS+=+qt5base-core +qt5base-gui +qt5base-network +libfreetype +fontconfig +PACKAGE_qt5base-input-autodiscovery:libudev +PACKAGE_qt5base-plugin-input-libinput:libinput
+  DEPENDS+=+qt5base-core +qt5base-gui +qt5base-network +libfreetype +fontconfig +PACKAGE_qt5base-input-autodiscovery:libudev +PACKAGE_qt5base-plugin-input-libinput:libudev +PACKAGE_qt5base-plugin-input-libinput:libinput
 endef
 
 
