@@ -1,0 +1,47 @@
+JavaScriptCore: size_t is not unsigned on Linux AArch64 ILP32
+
+The unsigned and size_t overloads of the GLib option API, and the size_t option parser, were
+kept only where size_t differs from unsigned: 64-bit, Darwin, Haiku. On Linux AArch64 ILP32
+size_t is unsigned long, a distinct type, so OptionsStorage::Unsigned had no overload
+(JSCOptions.cpp: no matching valueFromGValue for unsigned&). Keep both there as well.
+
+--- a/Source/JavaScriptCore/API/glib/JSCOptions.cpp
++++ b/Source/JavaScriptCore/API/glib/JSCOptions.cpp
+@@ -73,7 +73,7 @@
+     g_value_set_int(gValue, value);
+ }
+ 
+-#if CPU(ADDRESS64)
++#if CPU(ADDRESS64) || (OS(LINUX) && CPU(ARM64) && CPU(ADDRESS32))
+ static bool valueFromGValue(const GValue* gValue, unsigned& value)
+ {
+     value = g_value_get_uint(gValue);
+@@ -560,7 +560,7 @@
+     return JSC_OPTION_INT;
+ }
+ 
+-#if CPU(ADDRESS64)
++#if CPU(ADDRESS64) || (OS(LINUX) && CPU(ARM64) && CPU(ADDRESS32))
+ static JSCOptionType jscOptionsType(unsigned)
+ {
+     return JSC_OPTION_UINT;
+--- a/Source/JavaScriptCore/runtime/Options.cpp
++++ b/Source/JavaScriptCore/runtime/Options.cpp
+@@ -233,7 +233,7 @@
+     return std::nullopt;
+ }
+ 
+-#if CPU(ADDRESS64) || OS(DARWIN) || OS(HAIKU)
++#if CPU(ADDRESS64) || OS(DARWIN) || OS(HAIKU) || (OS(LINUX) && CPU(ARM64) && CPU(ADDRESS32))
+ template<>
+ std::optional<OptionsStorage::Size> parse(const char* string)
+ {
+@@ -242,7 +242,7 @@
+         return value;
+     return std::nullopt;
+ }
+-#endif // CPU(ADDRESS64) || OS(DARWIN) || OS(HAIKU)
++#endif // CPU(ADDRESS64) || OS(DARWIN) || OS(HAIKU) || (OS(LINUX) && CPU(ARM64) && CPU(ADDRESS32))
+ 
+ template<>
+ std::optional<OptionsStorage::Double> parse(const char* string)
