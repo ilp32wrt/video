@@ -1,0 +1,31 @@
+From: liviyifan <344781483+liviyifan@users.noreply.github.com>
+Subject: [PATCH] [AArch64] ILP32: use the small code model for JIT by default
+
+The JIT default on AArch64 is the large code model, which ILP32 does not
+have: there are no relocations for 64-bit absolute addresses, and the
+object writer stops with "absolute MOV relocation is not supported in
+ILP32". All ILP32 addresses are below 4 GiB, within the reach of ADRP, so
+the small code model always works. A code model that is asked for
+explicitly is not changed.
+
+Signed-off-by: liviyifan <344781483+liviyifan@users.noreply.github.com>
+---
+ llvm/lib/Target/AArch64/AArch64TargetMachine.cpp | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/llvm/lib/Target/AArch64/AArch64TargetMachine.cpp b/llvm/lib/Target/AArch64/AArch64TargetMachine.cpp
+index bc51ab1f5..c8b1d844e 100644
+--- a/llvm/lib/Target/AArch64/AArch64TargetMachine.cpp
++++ b/llvm/lib/Target/AArch64/AArch64TargetMachine.cpp
+@@ -348,7 +348,10 @@ getEffectiveAArch64CodeModel(const Triple &TT,
+   // We should set the CodeModel::Small for Windows ARM64 in JIT mode,
+   // since with large code model LLVM generating 4 MOV instructions, and
+   // Windows doesn't support relocating these long branch (4 MOVs).
+-  if (JIT && !TT.isOSWindows())
++  // The ILP32 ABI has no large code model (it lacks the relocations for
++  // 64-bit absolute addresses), and with 32-bit addresses everything is
++  // within the reach of ADRP.
++  if (JIT && !TT.isOSWindows() && !TT.isILP32Environment())
+     return CodeModel::Large;
+   return CodeModel::Small;
+ }

@@ -1,0 +1,274 @@
+From: liviyifan <344781483+liviyifan@users.noreply.github.com>
+Subject: [PATCH] [RuntimeDyld] Support the relocations of AArch64 ILP32
+ (ELF32)
+
+RuntimeDyldELF only knew the LP64 relocation numbers of AArch64 and
+stopped with "Relocation type not implemented yet!" on an ILP32 object.
+Handle the R_AARCH64_P32_* relocations that the small and tiny code
+models produce: data (ABS16/32, PREL16/32, PLT32), MOVW_UABS_G0_NC/G1,
+ADR, ADRP, ADD and LDST, the branches, and the GOT pair (ADR_GOT_PAGE,
+LD32_GOT_LO12_NC).
+
+- The numbers do not overlap with the LP64 ones, so most of them are
+  extra case labels.
+- PREL32 and PLT32 are taken modulo 2^32: a target on the other side of
+  the 4 GiB address space is in range.
+- A GOT entry holds the 32-bit address at the start of the usual 8-byte
+  slot.
+- A branch stub loads a 32-bit address: only its lower two instructions
+  get (ILP32 MOVW) relocations.
+- The address of an external symbol that arrives sign-extended from 32
+  bits is cut back to 32 bits. GCC sign-extends a pointer that is cast to
+  uint64_t, and JIT clients do that with the addresses they register.
+
+Signed-off-by: liviyifan <344781483+liviyifan@users.noreply.github.com>
+---
+ .../RuntimeDyld/RuntimeDyldELF.cpp            | 92 +++++++++++++++----
+ 1 file changed, 75 insertions(+), 17 deletions(-)
+
+diff --git a/llvm/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldELF.cpp b/llvm/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldELF.cpp
+index cca99591c..db78b983f 100644
+--- a/llvm/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldELF.cpp
++++ b/llvm/lib/ExecutionEngine/RuntimeDyld/RuntimeDyldELF.cpp
+@@ -417,20 +417,30 @@ void RuntimeDyldELF::resolveAArch64Relocation(const SectionEntry &Section,
+                     << format("%x", Type) << " Addend: 0x"
+                     << format("%llx", Addend) << "\n");
+ 
++  // The relocations of the ILP32 ABI (numbers below 0x100) work on 32-bit
++  // addresses. The address of an external symbol can arrive sign-extended
++  // from 32 bits: that is what GCC makes of a cast from a 32-bit pointer to
++  // uint64_t. Undo that; no other address has all upper 32 bits set.
++  if (Type != ELF::R_AARCH64_NONE && Type < 0x100 &&
++      (Value >> 32) == 0xffffffffULL)
++    Value &= 0xffffffffULL;
++
+   switch (Type) {
+   default:
+     report_fatal_error("Relocation type not implemented yet!");
+     break;
+   case ELF::R_AARCH64_NONE:
+     break;
+-  case ELF::R_AARCH64_ABS16: {
++  case ELF::R_AARCH64_ABS16:
++  case ELF::R_AARCH64_P32_ABS16: {
+     uint64_t Result = Value + Addend;
+     assert(Result == static_cast<uint64_t>(llvm::SignExtend64(Result, 16)) ||
+            (Result >> 16) == 0);
+     write(isBE, TargetPtr, static_cast<uint16_t>(Result & 0xffffU));
+     break;
+   }
+-  case ELF::R_AARCH64_ABS32: {
++  case ELF::R_AARCH64_ABS32:
++  case ELF::R_AARCH64_P32_ABS32: {
+     uint64_t Result = Value + Addend;
+     assert(Result == static_cast<uint64_t>(llvm::SignExtend64(Result, 32)) ||
+            (Result >> 32) == 0);
+@@ -447,7 +457,8 @@ void RuntimeDyldELF::resolveAArch64Relocation(const SectionEntry &Section,
+     write(isBE, TargetPtr, static_cast<uint32_t>(Result));
+     break;
+   }
+-  case ELF::R_AARCH64_PREL16: {
++  case ELF::R_AARCH64_PREL16:
++  case ELF::R_AARCH64_P32_PREL16: {
+     uint64_t Result = Value + Addend - FinalAddress;
+     assert(static_cast<int64_t>(Result) >= INT16_MIN &&
+            static_cast<int64_t>(Result) <= UINT16_MAX);
+@@ -464,7 +475,14 @@ void RuntimeDyldELF::resolveAArch64Relocation(const SectionEntry &Section,
+   case ELF::R_AARCH64_PREL64:
+     write(isBE, TargetPtr, Value + Addend - FinalAddress);
+     break;
+-  case ELF::R_AARCH64_CONDBR19: {
++  case ELF::R_AARCH64_P32_PREL32:
++  case ELF::R_AARCH64_P32_PLT32:
++    // ILP32 addresses are 32 bits wide and the difference is taken modulo
++    // 2^32, so a target on the other side of the address space is in range.
++    write(isBE, TargetPtr, static_cast<uint32_t>(Value + Addend - FinalAddress));
++    break;
++  case ELF::R_AARCH64_CONDBR19:
++  case ELF::R_AARCH64_P32_CONDBR19: {
+     uint64_t BranchImm = Value + Addend - FinalAddress;
+ 
+     assert(isInt<21>(BranchImm));
+@@ -473,7 +491,8 @@ void RuntimeDyldELF::resolveAArch64Relocation(const SectionEntry &Section,
+     or32le(TargetPtr, (BranchImm & 0x001FFFFC) << 3);
+     break;
+   }
+-  case ELF::R_AARCH64_TSTBR14: {
++  case ELF::R_AARCH64_TSTBR14:
++  case ELF::R_AARCH64_P32_TSTBR14: {
+     uint64_t BranchImm = Value + Addend - FinalAddress;
+ 
+     assert(isInt<16>(BranchImm));
+@@ -486,7 +505,9 @@ void RuntimeDyldELF::resolveAArch64Relocation(const SectionEntry &Section,
+     break;
+   }
+   case ELF::R_AARCH64_CALL26: // fallthrough
+-  case ELF::R_AARCH64_JUMP26: {
++  case ELF::R_AARCH64_JUMP26:
++  case ELF::R_AARCH64_P32_CALL26:
++  case ELF::R_AARCH64_P32_JUMP26: {
+     // Operation: S+A-P. Set Call or B immediate value to bits fff_fffc of the
+     // calculation.
+     uint64_t BranchImm = Value + Addend - FinalAddress;
+@@ -503,12 +524,15 @@ void RuntimeDyldELF::resolveAArch64Relocation(const SectionEntry &Section,
+     or32le(TargetPtr, ((Value + Addend) & 0xFFFF00000000) >> 27);
+     break;
+   case ELF::R_AARCH64_MOVW_UABS_G1_NC:
++  case ELF::R_AARCH64_P32_MOVW_UABS_G1:
+     or32le(TargetPtr, ((Value + Addend) & 0xFFFF0000) >> 11);
+     break;
+   case ELF::R_AARCH64_MOVW_UABS_G0_NC:
++  case ELF::R_AARCH64_P32_MOVW_UABS_G0_NC:
+     or32le(TargetPtr, ((Value + Addend) & 0xFFFF) << 5);
+     break;
+-  case ELF::R_AARCH64_ADR_PREL_PG_HI21: {
++  case ELF::R_AARCH64_ADR_PREL_PG_HI21:
++  case ELF::R_AARCH64_P32_ADR_PREL_PG_HI21: {
+     // Operation: Page(S+A) - Page(P)
+     uint64_t Result =
+         ((Value + Addend) & ~0xfffULL) - (FinalAddress & ~0xfffULL);
+@@ -522,42 +546,49 @@ void RuntimeDyldELF::resolveAArch64Relocation(const SectionEntry &Section,
+     break;
+   }
+   case ELF::R_AARCH64_ADD_ABS_LO12_NC:
++  case ELF::R_AARCH64_P32_ADD_ABS_LO12_NC:
+     // Operation: S + A
+     // Immediate goes in bits 21:10 of LD/ST instruction, taken
+     // from bits 11:0 of X
+     or32AArch64Imm(TargetPtr, Value + Addend);
+     break;
+   case ELF::R_AARCH64_LDST8_ABS_LO12_NC:
++  case ELF::R_AARCH64_P32_LDST8_ABS_LO12_NC:
+     // Operation: S + A
+     // Immediate goes in bits 21:10 of LD/ST instruction, taken
+     // from bits 11:0 of X
+     or32AArch64Imm(TargetPtr, getBits(Value + Addend, 0, 11));
+     break;
+   case ELF::R_AARCH64_LDST16_ABS_LO12_NC:
++  case ELF::R_AARCH64_P32_LDST16_ABS_LO12_NC:
+     // Operation: S + A
+     // Immediate goes in bits 21:10 of LD/ST instruction, taken
+     // from bits 11:1 of X
+     or32AArch64Imm(TargetPtr, getBits(Value + Addend, 1, 11));
+     break;
+   case ELF::R_AARCH64_LDST32_ABS_LO12_NC:
++  case ELF::R_AARCH64_P32_LDST32_ABS_LO12_NC:
+     // Operation: S + A
+     // Immediate goes in bits 21:10 of LD/ST instruction, taken
+     // from bits 11:2 of X
+     or32AArch64Imm(TargetPtr, getBits(Value + Addend, 2, 11));
+     break;
+   case ELF::R_AARCH64_LDST64_ABS_LO12_NC:
++  case ELF::R_AARCH64_P32_LDST64_ABS_LO12_NC:
+     // Operation: S + A
+     // Immediate goes in bits 21:10 of LD/ST instruction, taken
+     // from bits 11:3 of X
+     or32AArch64Imm(TargetPtr, getBits(Value + Addend, 3, 11));
+     break;
+   case ELF::R_AARCH64_LDST128_ABS_LO12_NC:
++  case ELF::R_AARCH64_P32_LDST128_ABS_LO12_NC:
+     // Operation: S + A
+     // Immediate goes in bits 21:10 of LD/ST instruction, taken
+     // from bits 11:4 of X
+     or32AArch64Imm(TargetPtr, getBits(Value + Addend, 4, 11));
+     break;
+-  case ELF::R_AARCH64_LD_PREL_LO19: {
++  case ELF::R_AARCH64_LD_PREL_LO19:
++  case ELF::R_AARCH64_P32_LD_PREL_LO19: {
+     // Operation: S + A - P
+     uint64_t Result = Value + Addend - FinalAddress;
+ 
+@@ -570,7 +601,8 @@ void RuntimeDyldELF::resolveAArch64Relocation(const SectionEntry &Section,
+     *TargetPtr |= ((Result & 0xffc) << (5 - 2));
+     break;
+   }
+-  case ELF::R_AARCH64_ADR_PREL_LO21: {
++  case ELF::R_AARCH64_ADR_PREL_LO21:
++  case ELF::R_AARCH64_P32_ADR_PREL_LO21: {
+     // Operation: S + A - P
+     uint64_t Result = Value + Addend - FinalAddress;
+ 
+@@ -1563,6 +1595,10 @@ void RuntimeDyldELF::resolveAArch64Branch(unsigned SectionID,
+     uint8_t *StubTargetAddr = createStubFunction(
+         Section.getAddressWithOffset(Section.getStubOffset()));
+ 
++    // An ILP32 address has 32 bits: the upper two instructions of the stub
++    // keep their zero immediates.
++    bool IsILP32 = RelType == ELF::R_AARCH64_P32_CALL26 ||
++                   RelType == ELF::R_AARCH64_P32_JUMP26;
+     RelocationEntry REmovz_g3(SectionID, StubTargetAddr - Section.getAddress(),
+                               ELF::R_AARCH64_MOVW_UABS_G3, Value.Addend);
+     RelocationEntry REmovk_g2(SectionID,
+@@ -1570,19 +1606,27 @@ void RuntimeDyldELF::resolveAArch64Branch(unsigned SectionID,
+                               ELF::R_AARCH64_MOVW_UABS_G2_NC, Value.Addend);
+     RelocationEntry REmovk_g1(SectionID,
+                               StubTargetAddr - Section.getAddress() + 8,
+-                              ELF::R_AARCH64_MOVW_UABS_G1_NC, Value.Addend);
++                              IsILP32 ? ELF::R_AARCH64_P32_MOVW_UABS_G1
++                                      : ELF::R_AARCH64_MOVW_UABS_G1_NC,
++                              Value.Addend);
+     RelocationEntry REmovk_g0(SectionID,
+                               StubTargetAddr - Section.getAddress() + 12,
+-                              ELF::R_AARCH64_MOVW_UABS_G0_NC, Value.Addend);
++                              IsILP32 ? ELF::R_AARCH64_P32_MOVW_UABS_G0_NC
++                                      : ELF::R_AARCH64_MOVW_UABS_G0_NC,
++                              Value.Addend);
+ 
+     if (Value.SymbolName) {
+-      addRelocationForSymbol(REmovz_g3, Value.SymbolName);
+-      addRelocationForSymbol(REmovk_g2, Value.SymbolName);
++      if (!IsILP32) {
++        addRelocationForSymbol(REmovz_g3, Value.SymbolName);
++        addRelocationForSymbol(REmovk_g2, Value.SymbolName);
++      }
+       addRelocationForSymbol(REmovk_g1, Value.SymbolName);
+       addRelocationForSymbol(REmovk_g0, Value.SymbolName);
+     } else {
+-      addRelocationForSection(REmovz_g3, Value.SectionID);
+-      addRelocationForSection(REmovk_g2, Value.SectionID);
++      if (!IsILP32) {
++        addRelocationForSection(REmovz_g3, Value.SectionID);
++        addRelocationForSection(REmovk_g2, Value.SectionID);
++      }
+       addRelocationForSection(REmovk_g1, Value.SectionID);
+       addRelocationForSection(REmovk_g0, Value.SectionID);
+     }
+@@ -1691,7 +1735,9 @@ RuntimeDyldELF::processRelocationRef(
+                     << "\n");
+   if ((Arch == Triple::aarch64 || Arch == Triple::aarch64_be)) {
+     if ((RelType == ELF::R_AARCH64_CALL26 ||
+-         RelType == ELF::R_AARCH64_JUMP26) &&
++         RelType == ELF::R_AARCH64_JUMP26 ||
++         RelType == ELF::R_AARCH64_P32_CALL26 ||
++         RelType == ELF::R_AARCH64_P32_JUMP26) &&
+         MemMgr.allowStubAllocation()) {
+       resolveAArch64Branch(SectionID, Value, RelI, Stubs);
+     } else if (RelType == ELF::R_AARCH64_ADR_GOT_PAGE) {
+@@ -1705,6 +1751,16 @@ RuntimeDyldELF::processRelocationRef(
+       uint64_t GOTOffset = findOrAllocGOTEntry(Value, ELF::R_AARCH64_ABS64);
+       resolveGOTOffsetRelocation(SectionID, Offset, GOTOffset + Addend,
+                                  ELF::R_AARCH64_LDST64_ABS_LO12_NC);
++    } else if (RelType == ELF::R_AARCH64_P32_ADR_GOT_PAGE) {
++      // ILP32: a GOT entry holds a 32-bit address at the start of its slot
++      // of getGOTEntrySize() bytes.
++      uint64_t GOTOffset = findOrAllocGOTEntry(Value, ELF::R_AARCH64_P32_ABS32);
++      resolveGOTOffsetRelocation(SectionID, Offset, GOTOffset + Addend,
++                                 ELF::R_AARCH64_P32_ADR_PREL_PG_HI21);
++    } else if (RelType == ELF::R_AARCH64_P32_LD32_GOT_LO12_NC) {
++      uint64_t GOTOffset = findOrAllocGOTEntry(Value, ELF::R_AARCH64_P32_ABS32);
++      resolveGOTOffsetRelocation(SectionID, Offset, GOTOffset + Addend,
++                                 ELF::R_AARCH64_P32_LDST32_ABS_LO12_NC);
+     } else {
+       processSimpleRelocation(SectionID, Offset, RelType, Value);
+     }
+@@ -2932,7 +2988,9 @@ bool RuntimeDyldELF::relocationNeedsGot(const RelocationRef &R) const {
+   unsigned RelTy = R.getType();
+   if (Arch == Triple::aarch64 || Arch == Triple::aarch64_be)
+     return RelTy == ELF::R_AARCH64_ADR_GOT_PAGE ||
+-           RelTy == ELF::R_AARCH64_LD64_GOT_LO12_NC;
++           RelTy == ELF::R_AARCH64_LD64_GOT_LO12_NC ||
++           RelTy == ELF::R_AARCH64_P32_ADR_GOT_PAGE ||
++           RelTy == ELF::R_AARCH64_P32_LD32_GOT_LO12_NC;
+ 
+   if (Arch == Triple::loongarch64)
+     return RelTy == ELF::R_LARCH_GOT_PC_HI20 ||

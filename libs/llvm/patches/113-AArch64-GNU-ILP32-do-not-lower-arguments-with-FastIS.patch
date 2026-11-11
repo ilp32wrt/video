@@ -1,0 +1,32 @@
+From: liviyifan <344781483+liviyifan@users.noreply.github.com>
+Subject: [PATCH] [AArch64] GNU ILP32: do not lower arguments with FastISel
+
+AArch64FastISel::fastLowerArguments() copies arguments from their registers
+as they are, so at -O0 GNU ILP32 pointer arguments were used without the
+zero extension that LowerFormalArguments adds (their upper 32 bits are
+unspecified under AAPCS64). Leave the arguments of GNU ILP32 functions to
+SelectionDAG.
+
+(Backport of llvm-ilp32 patch 0008 to LLVM 21.1.3.)
+
+Signed-off-by: liviyifan <344781483+liviyifan@users.noreply.github.com>
+---
+ llvm/lib/Target/AArch64/AArch64FastISel.cpp | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/llvm/lib/Target/AArch64/AArch64FastISel.cpp b/llvm/lib/Target/AArch64/AArch64FastISel.cpp
+index 9d74bb5a8..d9793986b 100644
+--- a/llvm/lib/Target/AArch64/AArch64FastISel.cpp
++++ b/llvm/lib/Target/AArch64/AArch64FastISel.cpp
+@@ -2901,6 +2901,11 @@ bool AArch64FastISel::fastLowerArguments() {
+   if (!FuncInfo.CanLowerReturn)
+     return false;
+ 
++  // GNU ILP32 pointer arguments must be zero-extended by the callee; leave
++  // that to SelectionDAG.
++  if (Subtarget->isTargetGNUILP32())
++    return false;
++
+   const Function *F = FuncInfo.Fn;
+   if (F->isVarArg())
+     return false;

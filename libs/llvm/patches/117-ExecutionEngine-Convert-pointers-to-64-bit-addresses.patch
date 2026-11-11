@@ -1,0 +1,65 @@
+From: liviyifan <344781483+liviyifan@users.noreply.github.com>
+Subject: [PATCH] [ExecutionEngine] Convert pointers to 64-bit addresses
+ through uintptr_t
+
+GCC sign-extends a 32-bit pointer that is cast straight to a 64-bit
+integer. On a 32-bit host with libraries mapped above 2 GiB, the
+addresses recorded by addGlobalMapping() and returned by
+RTDyldMemoryManager::getSymbolAddressInProcess() were therefore
+0xffffffffXXXXXXXX. The 32-bit targets cut them to 32 bits again when the
+relocations are applied, but AArch64 ILP32 code keeps addresses in 64-bit
+registers: a branch stub loaded the sign-extended value and jumped to it.
+
+Signed-off-by: liviyifan <344781483+liviyifan@users.noreply.github.com>
+---
+ llvm/lib/ExecutionEngine/ExecutionEngine.cpp                | 6 +++---
+ .../lib/ExecutionEngine/RuntimeDyld/RTDyldMemoryManager.cpp | 5 ++++-
+ 2 files changed, 7 insertions(+), 4 deletions(-)
+
+diff --git a/llvm/lib/ExecutionEngine/ExecutionEngine.cpp b/llvm/lib/ExecutionEngine/ExecutionEngine.cpp
+index 01456d544..d5ee4d9ea 100644
+--- a/llvm/lib/ExecutionEngine/ExecutionEngine.cpp
++++ b/llvm/lib/ExecutionEngine/ExecutionEngine.cpp
+@@ -201,7 +201,7 @@ std::string ExecutionEngine::getMangledName(const GlobalValue *GV) {
+ 
+ void ExecutionEngine::addGlobalMapping(const GlobalValue *GV, void *Addr) {
+   std::lock_guard<sys::Mutex> locked(lock);
+-  addGlobalMapping(getMangledName(GV), (uint64_t) Addr);
++  addGlobalMapping(getMangledName(GV), (uint64_t)(uintptr_t)Addr);
+ }
+ 
+ void ExecutionEngine::addGlobalMapping(StringRef Name, uint64_t Addr) {
+@@ -240,7 +240,7 @@ void ExecutionEngine::clearGlobalMappingsFromModule(Module *M) {
+ uint64_t ExecutionEngine::updateGlobalMapping(const GlobalValue *GV,
+                                               void *Addr) {
+   std::lock_guard<sys::Mutex> locked(lock);
+-  return updateGlobalMapping(getMangledName(GV), (uint64_t) Addr);
++  return updateGlobalMapping(getMangledName(GV), (uint64_t)(uintptr_t)Addr);
+ }
+ 
+ uint64_t ExecutionEngine::updateGlobalMapping(StringRef Name, uint64_t Addr) {
+@@ -309,7 +309,7 @@ const GlobalValue *ExecutionEngine::getGlobalValueAtAddress(void *Addr) {
+   }
+ 
+   std::map<uint64_t, std::string>::iterator I =
+-    EEState.getGlobalAddressReverseMap().find((uint64_t) Addr);
++    EEState.getGlobalAddressReverseMap().find((uint64_t)(uintptr_t)Addr);
+ 
+   if (I != EEState.getGlobalAddressReverseMap().end()) {
+     StringRef Name = I->second;
+diff --git a/llvm/lib/ExecutionEngine/RuntimeDyld/RTDyldMemoryManager.cpp b/llvm/lib/ExecutionEngine/RuntimeDyld/RTDyldMemoryManager.cpp
+index 10160ddbf..e68d743ce 100644
+--- a/llvm/lib/ExecutionEngine/RuntimeDyld/RTDyldMemoryManager.cpp
++++ b/llvm/lib/ExecutionEngine/RuntimeDyld/RTDyldMemoryManager.cpp
+@@ -274,7 +274,10 @@ RTDyldMemoryManager::getSymbolAddressInProcess(const std::string &Name) {
+     ++NameStr;
+ #endif
+ 
+-  return (uint64_t)sys::DynamicLibrary::SearchForAddressOfSymbol(NameStr);
++  // Through uintptr_t: GCC sign-extends a 32-bit pointer that is converted
++  // to a 64-bit integer.
++  return (uint64_t)(uintptr_t)sys::DynamicLibrary::SearchForAddressOfSymbol(
++      NameStr);
+ }
+ 
+ void *RTDyldMemoryManager::getPointerToNamedFunction(const std::string &Name,

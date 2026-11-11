@@ -1,0 +1,25 @@
+From: liviyifan <344781483+liviyifan@users.noreply.github.com>
+Subject: [PATCH] [ORC] LLJIT: link AArch64 ILP32 objects with RuntimeDyld
+
+The AArch64 backend of JITLink reads ELF64 objects only. Keep ILP32 on
+RuntimeDyld, which handles its ELF32 objects.
+
+Signed-off-by: liviyifan <344781483+liviyifan@users.noreply.github.com>
+---
+ llvm/lib/ExecutionEngine/Orc/LLJIT.cpp | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/llvm/lib/ExecutionEngine/Orc/LLJIT.cpp b/llvm/lib/ExecutionEngine/Orc/LLJIT.cpp
+index 67bb7dd8a..1575330d9 100644
+--- a/llvm/lib/ExecutionEngine/Orc/LLJIT.cpp
++++ b/llvm/lib/ExecutionEngine/Orc/LLJIT.cpp
+@@ -807,7 +807,8 @@ Error LLJITBuilderState::prepareForConstruction() {
+       UseJITLink = true;
+       break;
+     case Triple::aarch64:
+-      UseJITLink = !TT.isOSBinFormatCOFF();
++      // JITLink reads ELF64 objects only: ILP32 (ELF32) stays on RuntimeDyld.
++      UseJITLink = !TT.isOSBinFormatCOFF() && !TT.isILP32Environment();
+       break;
+     case Triple::arm:
+     case Triple::armeb:

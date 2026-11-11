@@ -1,0 +1,75 @@
+From: liviyifan <344781483+liviyifan@users.noreply.github.com>
+Subject: [PATCH] [AArch64] GNU ILP32: zero-extend received pointers
+
+arm64_32 has the producer of a pointer zero-extend it to 64 bits when it is
+passed or returned in a register, and the same rule was applied to the GNU
+ILP32 ABI. AAPCS64 and GCC -mabi=ilp32 work the other way round: the upper
+32 bits of a pointer in an X register or an 8-byte stack slot are
+unspecified. GCC does not clear them when it passes or returns a pointer
+(it stores only 4 bytes for a stack argument) and zero-extends on receipt.
+
+Code compiled by LLVM could therefore use garbage upper bits as part of an
+address when called from GCC-compiled code, or when using a pointer
+returned by it, e.g. a pointer converted from a 64-bit integer or a ninth
+pointer argument.
+
+For gnu_ilp32, zero-extend pointer arguments (in registers and on the
+stack) and pointer call results instead of asserting that they are already
+zero-extended. arm64_32 is unchanged.
+
+(Backport of llvm-ilp32 patch 0002 to LLVM 21.1.3, without the tests.)
+
+Signed-off-by: liviyifan <344781483+liviyifan@users.noreply.github.com>
+---
+ llvm/lib/Target/AArch64/AArch64ISelLowering.cpp | 12 +++++++++++-
+ llvm/lib/Target/AArch64/AArch64Subtarget.h      |  7 +++++++
+ 2 files changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/llvm/lib/Target/AArch64/AArch64ISelLowering.cpp b/llvm/lib/Target/AArch64/AArch64ISelLowering.cpp
+index bde4ba993..2b0ceb31f 100644
+--- a/llvm/lib/Target/AArch64/AArch64ISelLowering.cpp
++++ b/llvm/lib/Target/AArch64/AArch64ISelLowering.cpp
+@@ -8011,7 +8011,9 @@ SDValue AArch64TargetLowering::LowerFormalArguments(
+         }
+       }
+     } else {
+-      if (Subtarget->isTargetILP32() && Ins[i].Flags.isPointer())
++      if (Subtarget->isTargetGNUILP32() && Ins[i].Flags.isPointer())
++        ArgValue = DAG.getZeroExtendInReg(ArgValue, DL, MVT::i32);
++      else if (Subtarget->isTargetILP32() && Ins[i].Flags.isPointer())
+         ArgValue = DAG.getNode(ISD::AssertZext, DL, ArgValue.getValueType(),
+                                ArgValue, DAG.getValueType(MVT::i32));
+ 
+@@ -9524,6 +9526,14 @@ AArch64TargetLowering::LowerCall(CallLoweringInfo &CLI,
+       Chain, InGlue, CallConv, IsVarArg, RVLocs, DL, DAG, InVals, IsThisReturn,
+       IsThisReturn ? OutVals[0] : SDValue(), RequiresSMChange);
+ 
++  // A GNU ILP32 callee may return a pointer with garbage in the upper 32 bits.
++  if (Subtarget->isTargetGNUILP32()) {
++    assert(InVals.size() == Ins.size() && "unexpected call result split");
++    for (unsigned I = IsThisReturn ? 1 : 0, E = InVals.size(); I != E; ++I)
++      if (Ins[I].Flags.isPointer())
++        InVals[I] = DAG.getZeroExtendInReg(InVals[I], DL, MVT::i32);
++  }
++
+   if (!Ins.empty())
+     InGlue = Result.getValue(Result->getNumValues() - 1);
+ 
+diff --git a/llvm/lib/Target/AArch64/AArch64Subtarget.h b/llvm/lib/Target/AArch64/AArch64Subtarget.h
+index 154db3c07..dfce592e9 100644
+--- a/llvm/lib/Target/AArch64/AArch64Subtarget.h
++++ b/llvm/lib/Target/AArch64/AArch64Subtarget.h
+@@ -298,6 +298,13 @@ public:
+            TargetTriple.getEnvironment() == Triple::GNUILP32;
+   }
+ 
++  /// GNU ILP32 follows AAPCS64: the upper 32 bits of a pointer passed or
++  /// returned in a 64-bit register (or 8-byte stack slot) are unspecified and
++  /// the receiver zero-extends it. arm64_32 has the producer do that instead.
++  bool isTargetGNUILP32() const {
++    return TargetTriple.getEnvironment() == Triple::GNUILP32;
++  }
++
+   bool useAA() const override;
+ 
+   bool addrSinkUsingGEPs() const override {

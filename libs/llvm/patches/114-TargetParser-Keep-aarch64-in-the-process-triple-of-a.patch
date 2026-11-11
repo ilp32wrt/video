@@ -1,0 +1,35 @@
+From: liviyifan <344781483+liviyifan@users.noreply.github.com>
+Subject: [PATCH] [TargetParser] Keep aarch64 in the process triple of an ILP32
+ process
+
+sys::getProcessTriple() replaces a 64-bit architecture with its 32-bit
+variant when pointers are 4 bytes wide. For an AArch64 ILP32 host
+(aarch64-*-linux-gnu_ilp32 or -musl_ilp32) that turns the triple into
+arm-*, another instruction set, and every JIT that starts from the
+process triple fails with
+
+  No available targets are compatible with triple "arm-unknown-linux-musl_ilp32"
+
+The architecture of an ILP32 process is still aarch64: leave it.
+
+Signed-off-by: liviyifan <344781483+liviyifan@users.noreply.github.com>
+---
+ llvm/lib/TargetParser/Host.cpp | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/llvm/lib/TargetParser/Host.cpp b/llvm/lib/TargetParser/Host.cpp
+index 8fd91fcd3..3bff129a0 100644
+--- a/llvm/lib/TargetParser/Host.cpp
++++ b/llvm/lib/TargetParser/Host.cpp
+@@ -2325,7 +2325,10 @@ std::string sys::getProcessTriple() {
+ 
+   if (sizeof(void *) == 8 && PT.isArch32Bit())
+     PT = PT.get64BitArchVariant();
+-  if (sizeof(void *) == 4 && PT.isArch64Bit())
++  // An AArch64 ILP32 process has 32-bit pointers, but its architecture is
++  // still aarch64: the 32-bit variant, arm, is another instruction set.
++  if (sizeof(void *) == 4 && PT.isArch64Bit() &&
++      !(PT.isAArch64() && PT.isILP32Environment()))
+     PT = PT.get32BitArchVariant();
+ 
+   return PT.str();

@@ -1,0 +1,221 @@
+From: liviyifan <344781483+liviyifan@users.noreply.github.com>
+Subject: [PATCH] [AArch64] Support the musl ILP32 environment (musl_ilp32)
+
+Add the environment musl_ilp32 for the AArch64 ILP32 ABI with musl, as in
+aarch64-openwrt-linux-musl_ilp32 (OpenWrt's aarch64 ILP32 toolchain). It uses
+the same data model and calling convention as gnu_ilp32.
+
+- Triple::MuslILP32, parsed before "musl"; isMusl() includes it, and the
+  new Triple::isILP32Environment() is true for gnu_ilp32 and musl_ilp32.
+- Use isILP32Environment() where only GNUILP32 was checked: the data layout,
+  the ELF EH encoding, the AArch64 backend (isTargetILP32, isTargetGNUILP32),
+  the MC layer and clang's data model.
+- Driver: -mabi=ilp32 and -mabi=lp64 switch between musl and musl_ilp32 as
+  they do between gnu and gnu_ilp32; the dynamic linker is
+  /lib/ld-musl-aarch64[_be]_ilp32.so.1 and the ld emulation
+  aarch64linux32[b]. The libilp32 directory, the multiarch triple and the
+  glibc dynamic linker stay GNU-only: musl ILP32 keeps its libraries in lib.
+
+(Backport of the llvm/ part of llvm-ilp32 patch 0006 to LLVM 21.1.3, without the tests and the clang driver changes.)
+
+Signed-off-by: liviyifan <344781483+liviyifan@users.noreply.github.com>
+---
+ llvm/include/llvm/TargetParser/Triple.h            | 12 ++++++++++--
+ llvm/lib/CodeGen/TargetLoweringObjectFileImpl.cpp  |  2 +-
+ llvm/lib/Target/AArch64/AArch64Subtarget.h         | 14 ++++++--------
+ llvm/lib/Target/AArch64/AArch64TargetMachine.cpp   |  4 ++--
+ .../Target/AArch64/AsmParser/AArch64AsmParser.cpp  |  2 +-
+ .../AArch64/MCTargetDesc/AArch64AsmBackend.cpp     |  4 ++--
+ .../AArch64/MCTargetDesc/AArch64MCAsmInfo.cpp      |  2 +-
+ .../AArch64/MCTargetDesc/AArch64MCCodeEmitter.cpp  |  2 +-
+ llvm/lib/TargetParser/Triple.cpp                   |  3 +++
+ 9 files changed, 27 insertions(+), 18 deletions(-)
+
+diff --git a/llvm/include/llvm/TargetParser/Triple.h b/llvm/include/llvm/TargetParser/Triple.h
+index 657f42303..2c879000c 100644
+--- a/llvm/include/llvm/TargetParser/Triple.h
++++ b/llvm/include/llvm/TargetParser/Triple.h
+@@ -273,6 +273,7 @@ public:
+     MuslF32,
+     MuslSF,
+     MuslX32,
++    MuslILP32,
+     LLVM,
+ 
+     MSVC,
+@@ -840,6 +841,7 @@ public:
+            getEnvironment() == Triple::MuslF32 ||
+            getEnvironment() == Triple::MuslSF ||
+            getEnvironment() == Triple::MuslX32 ||
++           getEnvironment() == Triple::MuslILP32 ||
+            getEnvironment() == Triple::OpenHOS || isOSLiteOS();
+   }
+ 
+@@ -1006,8 +1008,7 @@ public:
+     assert(PointerWidth == 64 || PointerWidth == 32);
+     if (!isAArch64())
+       return false;
+-    return getArch() == Triple::aarch64_32 ||
+-                   getEnvironment() == Triple::GNUILP32
++    return getArch() == Triple::aarch64_32 || isILP32Environment()
+                ? PointerWidth == 32
+                : PointerWidth == 64;
+   }
+@@ -1132,6 +1133,13 @@ public:
+     return Env == Triple::GNUX32 || Env == Triple::MuslX32;
+   }
+ 
++  /// Tests whether the target uses the AArch64 Linux ILP32 ABI (32-bit long
++  /// and pointers, as GCC's -mabi=ilp32), with glibc or musl.
++  bool isILP32Environment() const {
++    EnvironmentType Env = getEnvironment();
++    return Env == Triple::GNUILP32 || Env == Triple::MuslILP32;
++  }
++
+   /// Tests whether the target is eBPF.
+   bool isBPF() const {
+     return getArch() == Triple::bpfel || getArch() == Triple::bpfeb;
+diff --git a/llvm/lib/CodeGen/TargetLoweringObjectFileImpl.cpp b/llvm/lib/CodeGen/TargetLoweringObjectFileImpl.cpp
+index 7e501a9e2..d3f3cf929 100644
+--- a/llvm/lib/CodeGen/TargetLoweringObjectFileImpl.cpp
++++ b/llvm/lib/CodeGen/TargetLoweringObjectFileImpl.cpp
+@@ -191,7 +191,7 @@ void TargetLoweringObjectFileELF::Initialize(MCContext &Ctx,
+     //
+     // Use DW_EH_PE_indirect even for -fno-pic to avoid copy relocations.
+     LSDAEncoding = dwarf::DW_EH_PE_pcrel |
+-                   (TgtM.getTargetTriple().getEnvironment() == Triple::GNUILP32
++                   (TgtM.getTargetTriple().isILP32Environment()
+                         ? dwarf::DW_EH_PE_sdata4
+                         : dwarf::DW_EH_PE_sdata8);
+     PersonalityEncoding = LSDAEncoding | dwarf::DW_EH_PE_indirect;
+diff --git a/llvm/lib/Target/AArch64/AArch64Subtarget.h b/llvm/lib/Target/AArch64/AArch64Subtarget.h
+index dfce592e9..77c6e881f 100644
+--- a/llvm/lib/Target/AArch64/AArch64Subtarget.h
++++ b/llvm/lib/Target/AArch64/AArch64Subtarget.h
+@@ -294,16 +294,14 @@ public:
+   bool isTargetMachO() const { return TargetTriple.isOSBinFormatMachO(); }
+ 
+   bool isTargetILP32() const {
+-    return TargetTriple.isArch32Bit() ||
+-           TargetTriple.getEnvironment() == Triple::GNUILP32;
++    return TargetTriple.isArch32Bit() || TargetTriple.isILP32Environment();
+   }
+ 
+-  /// GNU ILP32 follows AAPCS64: the upper 32 bits of a pointer passed or
+-  /// returned in a 64-bit register (or 8-byte stack slot) are unspecified and
+-  /// the receiver zero-extends it. arm64_32 has the producer do that instead.
+-  bool isTargetGNUILP32() const {
+-    return TargetTriple.getEnvironment() == Triple::GNUILP32;
+-  }
++  /// The GNU ILP32 ABI (aarch64-*-linux-gnu_ilp32 and -musl_ilp32) follows
++  /// AAPCS64: the upper 32 bits of a pointer passed or returned in a 64-bit
++  /// register (or 8-byte stack slot) are unspecified and the receiver
++  /// zero-extends it. arm64_32 has the producer do that instead.
++  bool isTargetGNUILP32() const { return TargetTriple.isILP32Environment(); }
+ 
+   bool useAA() const override;
+ 
+diff --git a/llvm/lib/Target/AArch64/AArch64TargetMachine.cpp b/llvm/lib/Target/AArch64/AArch64TargetMachine.cpp
+index 95eab1651..bc51ab1f5 100644
+--- a/llvm/lib/Target/AArch64/AArch64TargetMachine.cpp
++++ b/llvm/lib/Target/AArch64/AArch64TargetMachine.cpp
+@@ -304,7 +304,7 @@ static std::string computeDataLayout(const Triple &TT,
+     return "e-m:w-p270:32:32-p271:32:32-p272:64:64-p:64:64-i32:32-i64:64-i128:"
+            "128-n32:64-S128-Fn32";
+   std::string Endian = LittleEndian ? "e" : "E";
+-  std::string Ptr32 = TT.getEnvironment() == Triple::GNUILP32 ? "-p:32:32" : "";
++  std::string Ptr32 = TT.isILP32Environment() ? "-p:32:32" : "";
+   return Endian + "-m:e" + Ptr32 +
+          "-p270:32:32-p271:32:32-p272:64:64-i8:8:32-i16:16:32-i64:64-i128:128-"
+          "n32:64-S128-Fn32";
+@@ -400,7 +400,7 @@ AArch64TargetMachine::AArch64TargetMachine(const Target &T, const Triple &TT,
+   // MachO/CodeModel::Large, which GlobalISel does not support.
+   if (static_cast<int>(getOptLevel()) <= EnableGlobalISelAtO &&
+       TT.getArch() != Triple::aarch64_32 &&
+-      TT.getEnvironment() != Triple::GNUILP32 &&
++      !TT.isILP32Environment() &&
+       !(getCodeModel() == CodeModel::Large && TT.isOSBinFormatMachO())) {
+     setGlobalISel(true);
+     setGlobalISelAbort(GlobalISelAbortMode::Disable);
+diff --git a/llvm/lib/Target/AArch64/AsmParser/AArch64AsmParser.cpp b/llvm/lib/Target/AArch64/AsmParser/AArch64AsmParser.cpp
+index 1ca61f5c6..a05618a02 100644
+--- a/llvm/lib/Target/AArch64/AsmParser/AArch64AsmParser.cpp
++++ b/llvm/lib/Target/AArch64/AsmParser/AArch64AsmParser.cpp
+@@ -309,7 +309,7 @@ public:
+   AArch64AsmParser(const MCSubtargetInfo &STI, MCAsmParser &Parser,
+                    const MCInstrInfo &MII, const MCTargetOptions &Options)
+     : MCTargetAsmParser(Options, STI, MII) {
+-    IsILP32 = STI.getTargetTriple().getEnvironment() == Triple::GNUILP32;
++    IsILP32 = STI.getTargetTriple().isILP32Environment();
+     IsWindowsArm64EC = STI.getTargetTriple().isWindowsArm64EC();
+     MCAsmParserExtension::Initialize(Parser);
+     MCStreamer &S = getParser().getStreamer();
+diff --git a/llvm/lib/Target/AArch64/MCTargetDesc/AArch64AsmBackend.cpp b/llvm/lib/Target/AArch64/MCTargetDesc/AArch64AsmBackend.cpp
+index b9d3e1bf8..867e7884d 100644
+--- a/llvm/lib/Target/AArch64/MCTargetDesc/AArch64AsmBackend.cpp
++++ b/llvm/lib/Target/AArch64/MCTargetDesc/AArch64AsmBackend.cpp
+@@ -791,7 +791,7 @@ MCAsmBackend *llvm::createAArch64leAsmBackend(const Target &T,
+   assert(TheTriple.isOSBinFormatELF() && "Invalid target");
+ 
+   uint8_t OSABI = MCELFObjectTargetWriter::getOSABI(TheTriple.getOS());
+-  bool IsILP32 = STI.getTargetTriple().getEnvironment() == Triple::GNUILP32;
++  bool IsILP32 = STI.getTargetTriple().isILP32Environment();
+   return new ELFAArch64AsmBackend(T, TheTriple, OSABI, /*IsLittleEndian=*/true,
+                                   IsILP32);
+ }
+@@ -804,7 +804,7 @@ MCAsmBackend *llvm::createAArch64beAsmBackend(const Target &T,
+   assert(TheTriple.isOSBinFormatELF() &&
+          "Big endian is only supported for ELF targets!");
+   uint8_t OSABI = MCELFObjectTargetWriter::getOSABI(TheTriple.getOS());
+-  bool IsILP32 = STI.getTargetTriple().getEnvironment() == Triple::GNUILP32;
++  bool IsILP32 = STI.getTargetTriple().isILP32Environment();
+   return new ELFAArch64AsmBackend(T, TheTriple, OSABI, /*IsLittleEndian=*/false,
+                                   IsILP32);
+ }
+diff --git a/llvm/lib/Target/AArch64/MCTargetDesc/AArch64MCAsmInfo.cpp b/llvm/lib/Target/AArch64/MCTargetDesc/AArch64MCAsmInfo.cpp
+index 828c5c546..2d43172a9 100644
+--- a/llvm/lib/Target/AArch64/MCTargetDesc/AArch64MCAsmInfo.cpp
++++ b/llvm/lib/Target/AArch64/MCTargetDesc/AArch64MCAsmInfo.cpp
+@@ -200,7 +200,7 @@ AArch64MCAsmInfoELF::AArch64MCAsmInfoELF(const Triple &T) {
+   // targeting ELF.
+   AssemblerDialect = AsmWriterVariant == Default ? Generic : AsmWriterVariant;
+ 
+-  CodePointerSize = T.getEnvironment() == Triple::GNUILP32 ? 4 : 8;
++  CodePointerSize = T.isILP32Environment() ? 4 : 8;
+ 
+   // ".comm align is in bytes but .align is pow-2."
+   AlignmentIsInBytes = false;
+diff --git a/llvm/lib/Target/AArch64/MCTargetDesc/AArch64MCCodeEmitter.cpp b/llvm/lib/Target/AArch64/MCTargetDesc/AArch64MCCodeEmitter.cpp
+index 6e5a69030..d1e618228 100644
+--- a/llvm/lib/Target/AArch64/MCTargetDesc/AArch64MCCodeEmitter.cpp
++++ b/llvm/lib/Target/AArch64/MCTargetDesc/AArch64MCCodeEmitter.cpp
+@@ -732,7 +732,7 @@ void AArch64MCCodeEmitter::encodeInstruction(const MCInst &MI,
+     // This is a directive which applies an R_AARCH64_TLSDESC_CALL to the
+     // following (BLR) instruction. It doesn't emit any code itself so it
+     // doesn't go through the normal TableGenerated channels.
+-    auto Reloc = STI.getTargetTriple().getEnvironment() == Triple::GNUILP32
++    auto Reloc = STI.getTargetTriple().isILP32Environment()
+                      ? ELF::R_AARCH64_P32_TLSDESC_CALL
+                      : ELF::R_AARCH64_TLSDESC_CALL;
+     addFixup(Fixups, 0, MI.getOperand(0).getExpr(), Reloc);
+diff --git a/llvm/lib/TargetParser/Triple.cpp b/llvm/lib/TargetParser/Triple.cpp
+index 0584c941d..5c954844f 100644
+--- a/llvm/lib/TargetParser/Triple.cpp
++++ b/llvm/lib/TargetParser/Triple.cpp
+@@ -359,6 +359,8 @@ StringRef Triple::getEnvironmentTypeName(EnvironmentType Kind) {
+     return "muslabi64";
+   case MuslEABI: return "musleabi";
+   case MuslEABIHF: return "musleabihf";
++  case MuslILP32:
++    return "musl_ilp32";
+   case MuslF32:
+     return "muslf32";
+   case MuslSF:
+@@ -746,6 +748,7 @@ static Triple::EnvironmentType parseEnvironment(StringRef EnvironmentName) {
+       .StartsWith("muslf32", Triple::MuslF32)
+       .StartsWith("muslsf", Triple::MuslSF)
+       .StartsWith("muslx32", Triple::MuslX32)
++      .StartsWith("musl_ilp32", Triple::MuslILP32)
+       .StartsWith("musl", Triple::Musl)
+       .StartsWith("msvc", Triple::MSVC)
+       .StartsWith("itanium", Triple::Itanium)
