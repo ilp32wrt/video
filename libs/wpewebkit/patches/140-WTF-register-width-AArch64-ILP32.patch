@@ -1,0 +1,20 @@
+WTF: 32-bit register width on Linux AArch64 ILP32
+
+CPU(ARM64) made every AArch64 a 64-bit register CPU, so ILP32 got JSVALUE64. Without the JIT the
+C loop keeps values in uintptr_t registers, 4 bytes there, and failed to compile. Use
+REGISTER32 (JSVALUE32_64) for Linux ILP32; Apple's arm64_32 keeps REGISTER64.
+
+--- a/Source/WTF/wtf/PlatformCPU.h
++++ b/Source/WTF/wtf/PlatformCPU.h
+@@ -312,8 +312,10 @@
+ #endif
+ 
+ /* CPU general purpose register width. */
++/* Linux AArch64 ILP32 counts as 32-bit: it has no JIT or LLInt assembly (32-bit pointers), and the
++   C loop keeps JSValues in pointer-sized registers, so it needs JSVALUE32_64. */
+ #if !defined(WTF_CPU_REGISTER64) && !defined(WTF_CPU_REGISTER32)
+-#if CPU(ADDRESS64) || CPU(ARM64)
++#if CPU(ADDRESS64) || (CPU(ARM64) && !(defined(__linux__) && defined(__ILP32__)))
+ #define WTF_CPU_REGISTER64 1
+ #else
+ #define WTF_CPU_REGISTER32 1
