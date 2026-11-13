@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=mesa
 PKG_VERSION:=25.2.4
-PKG_RELEASE:=3
+PKG_RELEASE:=4
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.xz
 PKG_SOURCE_URL:=https://archive.mesa3d.org/
@@ -13,10 +13,11 @@ PKG_LICENSE:=BSD-3-Clause
 
 PKG_INSTALL:=1
 
-PKG_BUILD_DEPENDS:=glslang/host python3/host libva vulkan-headers \
+PKG_BUILD_DEPENDS:=glslang/host python3/host python-mako/host python-packaging/host libva vulkan-headers \
 		   MESA_USE_LLVM:llvm MESA_USE_LLVM:mesa/host
 
-HOST_BUILD_DEPENDS:=python3/host spirv-tools/host llvm
+# meson checks mako with "from packaging.version import Version" (no distutils fallback since Python 3.12)
+HOST_BUILD_DEPENDS:=python3/host python-mako/host python-packaging/host spirv-tools/host llvm
 
 PKG_CONFIG_DEPENDS:= \
 	CONFIG_PACKAGE_libmesa-amd \
